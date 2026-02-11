@@ -1,0 +1,77 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y qt6-base-dev
+      - name: Build
+        run: qmake6 && make -j$(nproc)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrcpybud-linux-x86_64
+          path: scrcpybud
+
+  build-i386:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - name: Build in i386 container
+        run: |
+          docker run --rm --platform linux/386 \
+            -v $PWD:/src -w /src \
+            debian:bookworm bash -c \
+            'apt-get update && apt-get install -y qt6-base-dev g++ make && qmake6 && make -j$(nproc)'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrcpybud-linux-i386
+          path: scrcpybud
+
+  build-arm:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+          - arch: armv7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: uraimo/run-on-arch-action@v3
+        with:
+          arch: ${{ matrix.arch }}
+          distro: ubuntu_latest
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y qt6-base-dev g++ make
+          run: |
+            qmake6 && make -j$(nproc)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrcpybud-linux-${{ matrix.arch }}
+          path: scrcpybud
+
+  release:
+    needs: [build-x86_64, build-i386, build-arm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Prepare release files
+        run: |
+          for dir in scrcpybud-linux-*; do
+            arch="${dir#scrcpybud-linux-}"
+            mv "$dir/scrcpybud" "scrcpybud-linux-$arch"
+          done
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: scrcpybud-linux-*
